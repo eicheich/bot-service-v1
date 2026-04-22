@@ -31,6 +31,14 @@ const crypto = require("crypto");
 const telegramConnectTokens = new Map();
 const discordConnectTokens = new Map();
 
+// ==========================================
+// PANCINGAN CPANEL (WAJIB ADA)
+// ==========================================
+// cPanel butuh rute ini untuk memastikan aplikasi Node.js tidak crash
+app.get("/", (req, res) => {
+    res.send("✅ Bot Service (Telegram & Discord) is Running on cPanel!");
+});
+
 function normalizeDiscordClaimToken(rawToken) {
     const token = String(rawToken || "").trim();
     if (!token) return "";
@@ -47,7 +55,7 @@ function purgeExpiredDiscordConnectTokens() {
 }
 
 // ==========================================
-// ENDPOINT KONEKSI TELEGRAM (cPanel Ready)
+// ENDPOINT KONEKSI TELEGRAM
 // ==========================================
 
 // 1. Generate Link Telegram
@@ -62,7 +70,6 @@ app.get("/telegram/connect-link", async (req, res) => {
         const token = req.query.token || crypto.randomUUID().replace(/-/g, "");
         const connectType = String(req.query.type || "group").toLowerCase() === "personal" ? "personal" : "group";
 
-        // Simpan token di memory (berlaku 15 menit)
         telegramConnectTokens.set(token, {
             token,
             state,
@@ -72,7 +79,6 @@ app.get("/telegram/connect-link", async (req, res) => {
             claimedFrom: null
         });
 
-        // Ambil username bot dari API Telegram
         const response = await fetch(getTelegramApiUrl("getMe"));
         const botData = await response.json();
         if (!botData.ok) throw new Error("Gagal mengambil data bot Telegram");
@@ -126,7 +132,6 @@ app.post("/telegram/connect/claim", (req, res) => {
         });
     }
 
-    // Jika berhasil diklaim, hapus dari antrean memory agar rapi
     const responseData = {
         token: record.token,
         state: record.state,
@@ -142,29 +147,22 @@ app.post("/telegram/connect/claim", (req, res) => {
     });
 });
 
-// 3. Webhook Telegram (Penerima Pesan Masuk / Pengganti Polling)
+// 3. Webhook Telegram
 app.post("/telegram/webhook", async (req, res) => {
-    // Balas 200 OK ke Telegram secepatnya agar request tidak diulang
     res.sendStatus(200);
-
     const update = req.body;
 
     try {
         const text = update?.message?.text || "";
-        const match = text.match(/^\/start(?:@\w+)?(?:\s+(.+))?$/i); // Deteksi "/start token_abc"
-
+        const match = text.match(/^\/start(?:@\w+)?(?:\s+(.+))?$/i);
         const chatMemberUpdate = update?.my_chat_member;
         const isGroupJoin = chatMemberUpdate && ["member", "administrator"].includes(chatMemberUpdate.new_chat_member?.status);
 
         let claimedToken = null;
 
-        // Jika user klik link personal (Start)
         if (match && match[1]) {
             claimedToken = match[1];
-        }
-        // Jika user memasukkan bot ke grup
-        else if (isGroupJoin) {
-            // Ambil token yang paling lama nunggu (pending)
+        } else if (isGroupJoin) {
             const pendingRecords = [...telegramConnectTokens.values()]
                 .filter(r => r.status === "pending")
                 .sort((a, b) => b.expiresAt - a.expiresAt);
@@ -189,7 +187,6 @@ app.post("/telegram/webhook", async (req, res) => {
                     username: from.username || null
                 } : null;
 
-                // Kirim pesan sukses ke HP User/Grup
                 await fetch(getTelegramApiUrl("sendMessage"), {
                     method: "POST",
                     headers: {
@@ -210,7 +207,7 @@ app.post("/telegram/webhook", async (req, res) => {
 // --- MIDDLEWARE AUTH ---
 if (BOT_SERVICE_API_KEY) {
     app.use((req, res, next) => {
-        if (req.path === "/health" || req.path === "/status") return next();
+        if (req.path === "/" || req.path === "/health" || req.path === "/status") return next();
         const providedKey = req.header("x-service-key");
         if (providedKey !== BOT_SERVICE_API_KEY) {
             return res.status(401).json({
@@ -240,7 +237,6 @@ function getTelegramApiUrl(method) {
 
 async function callTelegramJson(method, payload) {
     if (!TELEGRAM_BOT_TOKEN) throw new Error("TELEGRAM_BOT_TOKEN belum diset");
-
     const response = await fetch(getTelegramApiUrl(method), {
         method: "POST",
         headers: {
@@ -248,12 +244,8 @@ async function callTelegramJson(method, payload) {
         },
         body: JSON.stringify(payload)
     });
-
     const data = await response.json();
-    if (!response.ok || !data?.ok) {
-        throw new Error(data?.description || "Gagal Telegram API");
-    }
-
+    if (!response.ok || !data?.ok) throw new Error(data?.description || "Gagal Telegram API");
     return data.result;
 }
 
@@ -262,13 +254,9 @@ async function resolveTelegramChatName(chatId) {
         const chat = await callTelegramJson("getChat", {
             chat_id: chatId
         });
-
         if (!chat || typeof chat !== "object") return null;
 
-        if (chat.type === "group" || chat.type === "supergroup") {
-            return chat.title?.toString().trim() || null;
-        }
-
+        if (chat.type === "group" || chat.type === "supergroup") return chat.title?.toString().trim() || null;
         if (chat.type === "private") {
             const firstName = chat.first_name?.toString().trim();
             if (firstName) return firstName;
@@ -353,10 +341,7 @@ discordClient.once("clientReady", async () => {
         .setName("claim")
         .setDescription("Hubungkan channel ini ke aplikasi")
         .addStringOption((option) =>
-            option
-            .setName("token")
-            .setDescription("Masukkan token unik dari web")
-            .setRequired(true)
+            option.setName("token").setDescription("Masukkan token unik dari web").setRequired(true)
         ),
     ].map((command) => command.toJSON());
 
@@ -365,7 +350,7 @@ discordClient.once("clientReady", async () => {
     }).setToken(DISCORD_TOKEN);
     try {
         await rest.put(Routes.applicationCommands(clientId), {
-            body: commands,
+            body: commands
         });
         console.log("✅ Slash command /claim berhasil didaftarkan");
     } catch (error) {
@@ -380,56 +365,43 @@ discordClient.on("interactionCreate", async (interaction) => {
     const token = normalizeDiscordClaimToken(interaction.options.getString("token"));
     const record = discordConnectTokens.get(token);
 
-    if (!record) {
-        await interaction.reply({
-            content: "❌ Token tidak valid atau tidak ditemukan.",
-            ephemeral: true,
-        });
-        return;
-    }
-
-    if (!interaction.guildId) {
-        await interaction.reply({
-            content: "⚠️ Command ini hanya bisa dipakai di channel server, bukan DM.",
-            ephemeral: true,
-        });
-        return;
-    }
-
+    if (!record) return interaction.reply({
+        content: "❌ Token tidak valid atau tidak ditemukan.",
+        ephemeral: true
+    });
+    if (!interaction.guildId) return interaction.reply({
+        content: "⚠️ Command ini hanya bisa dipakai di channel server, bukan DM.",
+        ephemeral: true
+    });
     if (record.expiresAt <= Date.now()) {
         discordConnectTokens.delete(token);
-        await interaction.reply({
+        return interaction.reply({
             content: "⏳ Token sudah kedaluwarsa. Silakan generate ulang dari website.",
-            ephemeral: true,
+            ephemeral: true
         });
-        return;
     }
-
-    if (record.status === "claimed") {
-        await interaction.reply({
-            content: "⚠️ Token ini sudah digunakan.",
-            ephemeral: true,
-        });
-        return;
-    }
+    if (record.status === "claimed") return interaction.reply({
+        content: "⚠️ Token ini sudah digunakan.",
+        ephemeral: true
+    });
 
     record.status = "claimed";
     record.guild = {
         id: String(interaction.guildId),
-        name: interaction.guild?.name ? String(interaction.guild.name) : null,
+        name: interaction.guild?.name ? String(interaction.guild.name) : null
     };
     record.channel = {
         id: String(interaction.channelId),
-        name: interaction.channel?.name ? String(interaction.channel.name) : null,
+        name: interaction.channel?.name ? String(interaction.channel.name) : null
     };
     record.claimedBy = {
         id: String(interaction.user.id),
-        username: interaction.user?.username ? String(interaction.user.username) : null,
+        username: interaction.user?.username ? String(interaction.user.username) : null
     };
 
     await interaction.reply({
         content: `✅ Berhasil! Channel ini sudah terhubung. Token: ${record.token.slice(0, 6)}...`,
-        ephemeral: true,
+        ephemeral: true
     });
 });
 
@@ -455,15 +427,9 @@ async function sendDiscordDirect(channelId, message, attachment = null) {
 }
 
 async function resolveDiscordChannelInfo(channelId) {
-    if (!isDiscordConnected) {
-        throw new Error("Discord belum terhubung");
-    }
-
+    if (!isDiscordConnected) throw new Error("Discord belum terhubung");
     const channel = await discordClient.channels.fetch(String(channelId));
-    if (!channel || !channel.guildId) {
-        return null;
-    }
-
+    if (!channel || !channel.guildId) return null;
     const guild = channel.guild || await discordClient.guilds.fetch(channel.guildId);
 
     return {
@@ -477,10 +443,7 @@ async function resolveDiscordChannelInfo(channelId) {
 function getDiscordInviteLink() {
     const fallbackClientId = discordClient?.user?.id ? String(discordClient.user.id) : "";
     const clientId = String(DISCORD_CLIENT_ID || fallbackClientId).trim();
-
-    if (!clientId) {
-        return null;
-    }
+    if (!clientId) return null;
 
     const params = new URLSearchParams({
         client_id: clientId,
@@ -492,80 +455,28 @@ function getDiscordInviteLink() {
 }
 
 // ==========================================
-// 3. WHATSAPP SERVICES (Baileys/Cloud)
+// 3. WHATSAPP SERVICES (Dilewati Sementara)
 // ==========================================
-let sock = null;
-let isWaConnected = false;
-
 async function connectWhatsApp() {
-    if (!ENABLE_WHATSAPP) return;
-    if (WHATSAPP_PROVIDER === "cloud") {
-        isWaConnected = Boolean(WA_CLOUD_TOKEN && WA_CLOUD_PHONE_NUMBER_ID);
-        return;
-    }
-
-    const baileys = require("@whiskeysockets/baileys");
-    const {
-        state,
-        saveCreds
-    } = await baileys.useMultiFileAuthState("auth_info");
-    const qrcode = require("qrcode-terminal");
-
-    sock = baileys.default({
-        auth: state,
-        logger: require("pino")({
-            level: "silent"
-        }),
-        browser: ["Bot", "Chrome", "20.0.0"],
-    });
-
-    sock.ev.on("creds.update", saveCreds);
-    sock.ev.on("connection.update", ({
-        connection,
-        lastDisconnect,
-        qr
-    }) => {
-        if (qr) {
-            console.log("\n📱 SCAN QR CODE INI DI TERMINAL CPANEL:\n");
-            qrcode.generate(qr, {
-                small: true
-            });
-        }
-        if (connection === "close") {
-            isWaConnected = false;
-            const code = lastDisconnect?.error?.output?.statusCode;
-            if (code !== baileys.DisconnectReason.loggedOut) connectWhatsApp();
-        }
-        if (connection === "open") {
-            isWaConnected = true;
-            console.log("✅ WhatsApp terhubung!");
-        }
-    });
+    // Fungsi ini sengaja dikosongkan/dimatikan pemanggilannya di bawah
+    // agar cPanel tidak crash karena background process Baileys
 }
 
-// ... (Untuk fungsi sendWhatsAppText & sendWhatsAppFile WA, kamu bisa pakai fungsi persis seperti kodemu sebelumnya di bagian ini) ...
-// *Demi kepraktisan layar, bagian send WA saya lewati, kamu bisa paste fungsi sendWhatsAppText dari kodemu yang lama ke sini.*
-
 // ==========================================
-// 4. API ENDPOINTS (Langsung Kirim & Tunggu)
+// 4. API ENDPOINTS
 // ==========================================
 
-// Endpoint Telegram chat name
 app.get("/telegram/chat/:chatId", async (req, res) => {
     const chatId = req.params.chatId;
-    if (!chatId) {
-        return res.json({
-            name: null
-        });
-    }
-
+    if (!chatId) return res.json({
+        name: null
+    });
     const name = await resolveTelegramChatName(chatId);
     return res.json({
         name: name || null
     });
 });
 
-// Endpoint Telegram
 app.post("/telegram/send", async (req, res) => {
     try {
         const {
@@ -577,7 +488,6 @@ app.post("/telegram/send", async (req, res) => {
             success: false,
             message: "chat_id wajib"
         });
-
         const result = await sendTelegramDirect(chat_id, message, file);
         return res.json({
             success: true,
@@ -592,25 +502,23 @@ app.post("/telegram/send", async (req, res) => {
     }
 });
 
-// Endpoint Discord
 app.get("/discord/invite-link", (req, res) => {
     const inviteLink = getDiscordInviteLink();
+    const clientId = String(DISCORD_CLIENT_ID || discordClient?.user?.id || "").trim() || null;
 
     if (!inviteLink) {
         return res.status(503).json({
             success: false,
-            message: "DISCORD_CLIENT_ID belum diset dan bot Discord belum siap",
+            message: "DISCORD_CLIENT_ID belum diset",
             invite_link: null,
             data: {
                 invite_link: null,
                 client_id: null,
                 scope: DISCORD_INVITE_SCOPE,
-                permissions: String(DISCORD_INVITE_PERMISSIONS),
-            },
+                permissions: String(DISCORD_INVITE_PERMISSIONS)
+            }
         });
     }
-
-    const clientId = String(DISCORD_CLIENT_ID || discordClient?.user?.id || "").trim() || null;
 
     return res.json({
         success: true,
@@ -620,14 +528,13 @@ app.get("/discord/invite-link", (req, res) => {
             invite_link: inviteLink,
             client_id: clientId,
             scope: DISCORD_INVITE_SCOPE,
-            permissions: String(DISCORD_INVITE_PERMISSIONS),
-        },
+            permissions: String(DISCORD_INVITE_PERMISSIONS)
+        }
     });
 });
 
 app.get("/discord/connect-link", (req, res) => {
     purgeExpiredDiscordConnectTokens();
-
     const state = String(req.query?.state || "").trim();
     const token = crypto.randomUUID().replace(/-/g, "");
 
@@ -638,7 +545,7 @@ app.get("/discord/connect-link", (req, res) => {
         expiresAt: Date.now() + 900000,
         guild: null,
         channel: null,
-        claimedBy: null,
+        claimedBy: null
     });
 
     return res.json({
@@ -649,8 +556,8 @@ app.get("/discord/connect-link", (req, res) => {
             state,
             command: `/claim token:${token}`,
             status: "pending",
-            expires_at: new Date(Date.now() + 900000).toISOString(),
-        },
+            expires_at: new Date(Date.now() + 900000).toISOString()
+        }
     });
 });
 
@@ -658,73 +565,62 @@ app.post("/discord/connect/claim", (req, res) => {
     const token = normalizeDiscordClaimToken(req.body?.token);
     const record = discordConnectTokens.get(token);
 
-    if (!record) {
-        return res.status(404).json({
-            success: false,
-            message: "Token tidak ditemukan",
-        });
-    }
-
+    if (!record) return res.status(404).json({
+        success: false,
+        message: "Token tidak ditemukan"
+    });
     if (record.expiresAt <= Date.now()) {
         discordConnectTokens.delete(token);
         return res.status(410).json({
             success: false,
-            message: "Token kedaluwarsa",
+            message: "Token kedaluwarsa"
         });
     }
-
-    if (record.status === "pending") {
-        return res.status(202).json({
-            success: false,
-            message: "Belum diklaim di Discord",
-            data: record,
-        });
-    }
+    if (record.status === "pending") return res.status(202).json({
+        success: false,
+        message: "Belum diklaim di Discord",
+        data: record
+    });
 
     const responseData = {
         token: record.token,
         state: record.state,
         guild: record.guild,
         channel: record.channel,
-        claimed_by: record.claimedBy,
+        claimed_by: record.claimedBy
     };
-
     discordConnectTokens.delete(token);
 
     return res.json({
         success: true,
         message: "Koneksi Discord berhasil diklaim",
-        data: responseData,
+        data: responseData
     });
 });
 
 app.get("/discord/channel/:channelId", async (req, res) => {
     try {
         const channelId = String(req.params.channelId || "").trim();
-        if (!channelId) {
-            return res.status(400).json({
-                success: false,
-                message: "channelId wajib",
-            });
-        }
+        if (!channelId) return res.status(400).json({
+            success: false,
+            message: "channelId wajib"
+        });
 
         const data = await resolveDiscordChannelInfo(channelId);
-        if (!data) {
-            return res.status(404).json({
-                success: false,
-                message: "Channel tidak ditemukan atau bukan channel server",
-                data: null,
-            });
-        }
+        if (!data) return res.status(404).json({
+            success: false,
+            message: "Channel tidak ditemukan",
+            data: null
+        });
 
         return res.json({
             success: true,
-            data,
+            data
         });
     } catch (error) {
         return res.status(500).json({
             success: false,
-            message: error.message,
+            message: error.message
         });
     }
 });
@@ -740,34 +636,11 @@ app.post("/discord/send", async (req, res) => {
             success: false,
             message: "channel_id wajib"
         });
-
         const result = await sendDiscordDirect(channel_id, message, file);
         return res.json({
             success: true,
             message: "Pesan Discord terkirim!",
             id: result.id
-        });
-    } catch (error) {
-        return res.status(500).json({
-            success: false,
-            message: error.message
-        });
-    }
-});
-
-// Endpoint WA Teks (Satu Nomor)
-app.post("/whatsapp/send", async (req, res) => {
-    try {
-        const phone = normalizePhones([req.body.phone])[0];
-        if (!phone) return res.status(400).json({
-            success: false,
-            message: "Nomor tidak valid"
-        });
-
-        // await sendWhatsAppText(phone, req.body.message); // Pastikan fungsi ini ada
-        return res.json({
-            success: true,
-            message: "Pesan WA terkirim!"
         });
     } catch (error) {
         return res.status(500).json({
@@ -785,5 +658,5 @@ app.get("/health", (req, res) => res.json({
 
 app.listen(PORT, () => {
     console.log(`🚀 Kurir API berjalan di port ${PORT}`);
-    connectWhatsApp();
+    // connectWhatsApp(); // DIBUAT COMMENT SEMENTARA AGAR WA TIDAK JALAN DI CPANEL
 });
