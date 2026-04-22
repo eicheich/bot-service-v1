@@ -9,6 +9,16 @@ const express = require("express");
 require("dotenv").config();
 const app = express();
 
+// === KODE BARU: POTONG PREFIX URL CPANEL ===
+app.use((req, res, next) => {
+    const prefix = "/api/bot-service";
+    if (req.url.startsWith(prefix)) {
+        req.url = req.url.replace(prefix, "") || "/";
+    }
+    next();
+});
+// ===========================================
+
 // Konfigurasi limit JSON diperbesar jika file dikirim via base64
 app.use(express.json({
     limit: '50mb'
