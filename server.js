@@ -218,7 +218,10 @@ if (BOT_SERVICE_API_KEY) {
 
         const providedKey = req.header("x-service-key");
         if (providedKey !== BOT_SERVICE_API_KEY) {
-            return res.status(401).json({ success: false, message: "Unauthorized" });
+            return res.status(401).json({
+                success: false,
+                message: "Unauthorized"
+            });
         }
         return next();
     });
