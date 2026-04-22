@@ -207,13 +207,18 @@ app.post("/telegram/webhook", async (req, res) => {
 // --- MIDDLEWARE AUTH ---
 if (BOT_SERVICE_API_KEY) {
     app.use((req, res, next) => {
-        if (req.path === "/" || req.path === "/health" || req.path === "/status") return next();
+        // Kita ubah pakai .includes() agar kebal terhadap tambahan /api/bot-service dari cPanel
+        if (
+            req.path === "/" ||
+            req.path.includes("/health") ||
+            req.path.includes("/status")
+        ) {
+            return next(); // Loloskan tanpa API Key
+        }
+
         const providedKey = req.header("x-service-key");
         if (providedKey !== BOT_SERVICE_API_KEY) {
-            return res.status(401).json({
-                success: false,
-                message: "Unauthorized"
-            });
+            return res.status(401).json({ success: false, message: "Unauthorized" });
         }
         return next();
     });
